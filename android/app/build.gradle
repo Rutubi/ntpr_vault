@@ -39,7 +39,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.ntpr.vault"
+        applicationId = "com.wave.core"
         minSdk = 21
         targetSdk = 34
         versionCode = flutterVersionCode.toInteger()
