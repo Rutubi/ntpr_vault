@@ -1,9 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:math';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 
-void main() => runApp(NtprVault());
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  runApp(NtprVault());
+}
 
 class NtprVault extends StatelessWidget {
   @override
@@ -26,6 +39,11 @@ class _HomePageState extends State<HomePage> {
   String? _masterKey;
   bool _isVisible = false;
   
+  // FCM
+  String? _fcmToken;
+  String _userId = '';
+  final TextEditingController _userIdController = TextEditingController();
+  
   // Хранилище ключей для чатов
   Map<String, String> _chatKeys = {};
   String? _selectedChat;
@@ -40,6 +58,53 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _loadMasterKey();
     _loadChatKeys();
+    _setupFCM();
+  }
+
+  Future<void> _setupFCM() async {
+    // Запрашиваем разрешение
+    NotificationSettings settings = await FirebaseMessaging.instance.requestPermission();
+    
+    // Получаем токен
+    String? token = await FirebaseMessaging.instance.getToken();
+    setState(() => _fcmToken = token);
+    
+    // Слушаем уведомления
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('Уведомление: ${message.notification?.title} - ${message.notification?.body}');
+    });
+    
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      _openChat(message.data['dialog_id']);
+    });
+  }
+  
+  Future<void> _sendTokenToServer() async {
+    if (_userId.isEmpty || _fcmToken == null) return;
+    
+    try {
+      final response = await http.post(
+        Uri.parse('https://ntpr-backend2.vercel.app/api?action=save-fcm-token'),
+        body: {
+          'userId': _userId,
+          'token': _fcmToken!,
+        },
+      );
+      if (response.statusCode == 200) {
+        print('Токен отправлен на сервер');
+      } else {
+        print('Ошибка отправки токена: ${response.body}');
+      }
+    } catch (e) {
+      print('Ошибка отправки токена: $e');
+    }
+  }
+  
+  void _openChat(String? dialogId) {
+    // Открываем браузер с чатом
+    if (dialogId != null) {
+      // можно открыть URL: https://ntpr-gilt.vercel.app/chat?dialog_id=$dialogId
+    }
   }
 
   Future<void> _loadMasterKey() async {
@@ -117,7 +182,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text('Ntpr Vault'),
@@ -125,16 +190,16 @@ class _HomePageState extends State<HomePage> {
             Tab(text: 'Ключи'),
             Tab(text: 'Шифр'),
             Tab(text: 'Дешифр'),
+            Tab(text: 'FCM'),
           ]),
         ),
         body: TabBarView(
           children: [
-            // Вкладка управления ключами
+            // Вкладка управления ключами (без изменений)
             Padding(
               padding: EdgeInsets.all(16),
               child: Column(
                 children: [
-                  // Мастер-ключ
                   Card(
                     child: Padding(
                       padding: EdgeInsets.all(16),
@@ -169,7 +234,6 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   SizedBox(height: 20),
-                  // Создание ключа для чата
                   Card(
                     child: Padding(
                       padding: EdgeInsets.all(16),
@@ -317,6 +381,36 @@ class _HomePageState extends State<HomePage> {
                       _decryptedResult,
                       style: TextStyle(fontFamily: 'monospace', fontSize: 14),
                     ),
+                ],
+              ),
+            ),
+            // Новая вкладка FCM
+            Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('FCM Токен:', style: TextStyle(fontSize: 18)),
+                  SizedBox(height: 10),
+                  SelectableText(
+                    _fcmToken ?? 'Не получен',
+                    style: TextStyle(fontSize: 10, fontFamily: 'monospace'),
+                  ),
+                  SizedBox(height: 20),
+                  TextField(
+                    controller: _userIdController,
+                    decoration: InputDecoration(
+                      labelText: 'Ваш ID пользователя',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (value) => _userId = value,
+                  ),
+                  SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: _sendTokenToServer,
+                    child: Text('Сохранить токен на сервере'),
+                  ),
                 ],
               ),
             ),
