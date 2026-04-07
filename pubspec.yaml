@@ -1,5 +1,5 @@
 name: ntpr_vault
-description: Ntpr Vault - secure key storage
+description: Ntpr Vault - secure key storage with notifications
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,6 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_secure_storage: ^9.0.0
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
+  http: ^1.1.0
 
 dev_dependencies:
   flutter_test:
