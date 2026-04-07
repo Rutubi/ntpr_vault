@@ -8,15 +8,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Create google-services.json
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
+        working-directory: ./ntpr_vault
+      
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
       - run: flutter pub get
+        working-directory: ./ntpr_vault
       - run: flutter build apk --release
+        working-directory: ./ntpr_vault
       - uses: actions/upload-artifact@v4
         with:
           name: ntpr-vault-android
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ntpr_vault/build/app/outputs/flutter-apk/app-release.apk
 
   build-windows:
     runs-on: windows-latest
@@ -26,8 +34,10 @@ jobs:
         with:
           flutter-version: '3.22.0'
       - run: flutter pub get
+        working-directory: ./ntpr_vault
       - run: flutter build windows --release
+        working-directory: ./ntpr_vault
       - uses: actions/upload-artifact@v4
         with:
           name: ntpr-vault-windows
-          path: build/windows/runner/Release/
+          path: ntpr_vault/build/windows/runner/Release/
