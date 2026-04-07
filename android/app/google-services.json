@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "884095734318",
+    "project_id": "wavecore-465b3",
+    "storage_bucket": "wavecore-465b3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:884095734318:android:552ab520fea480cd8205bf",
+        "android_client_info": {
+          "package_name": "com.wave.core"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChYT_e8hSToqqZk5OXvc1_tWbCGr4jO48"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
