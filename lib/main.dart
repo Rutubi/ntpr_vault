@@ -148,7 +148,7 @@ class _HomePageState extends State<HomePage> {
           await http.post(
             Uri.parse('https://ntpr-backend2.vercel.app/api?action=save-fcm-token'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'userId': userId, 'token': _fcmToken})
+            body: jsonEncode({'userId': userId, 'token': _fcmToken, 'client_type': 'vault'})
           );
         }
         
