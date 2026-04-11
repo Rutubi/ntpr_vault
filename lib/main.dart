@@ -201,7 +201,7 @@ class VaultWebView extends StatefulWidget {
 }
 
 class _VaultWebViewState extends State<VaultWebView> {
-  WebViewController? _webViewController;
+  late final WebViewController _webViewController;
   final storage = FlutterSecureStorage();
   Map<String, String> _chatKeys = {};
   String? _userId;
@@ -211,6 +211,20 @@ class _VaultWebViewState extends State<VaultWebView> {
     super.initState();
     _loadData();
     _setupFCM();
+    _initWebView();
+  }
+
+  Future<void> _initWebView() async {
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'VaultBridge',
+        onMessageReceived: (JavaScriptMessage message) async {
+          final response = await _handleWebRequest(message.message);
+          _webViewController.runJavaScript("window.vaultCallback($response);");
+        },
+      )
+      ..loadRequest(Uri.parse(WEB_APP_URL));
   }
 
   Future<void> _loadData() async {
@@ -340,20 +354,7 @@ class _VaultWebViewState extends State<VaultWebView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: WebView(
-        initialUrl: WEB_APP_URL,
-        javascriptMode: JavascriptMode.unrestricted,
-        onWebViewCreated: (controller) => _webViewController = controller,
-        javascriptChannels: {
-          JavascriptChannel(
-            name: 'VaultBridge',
-            onMessageReceived: (JavascriptMessage message) async {
-              final response = await _handleWebRequest(message.message);
-              _webViewController?.runJavascript("window.vaultCallback($response);");
-            },
-          ),
-        },
-      ),
+      body: WebViewWidget(controller: _webViewController),
     );
   }
 }
