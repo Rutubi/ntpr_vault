@@ -2,89 +2,75 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'dart:math';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 
-// ========== КОНСТАНТЫ ==========
 const String API_URL = 'https://ntpr-backend2.vercel.app';
-const String FCM_SERVER_KEY = 'ТВОЙ_FCM_SERVER_KEY_СЮДА';
+const String FCM_SERVER_KEY = 'ТВОЙ_КЛЮЧ';
+const String WEB_APP_URL = 'https://ntpr-gilt.vercel.app';
 
-// ========== ФОНОВЫЙ ОБРАБОТЧИК ==========
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   
   final storage = FlutterSecureStorage();
+  final data = message.data;
   
-  // Получение ключа от собеседника
-  if (message.data['type'] == 'chat_key') {
+  if (data['type'] == 'chat_key') {
     String? keysJson = await storage.read(key: 'ntpr_chat_keys');
     Map<String, dynamic> keys = keysJson != null ? jsonDecode(keysJson) : {};
-    
-    keys[message.data['dialog_id']] = message.data['key'];
+    keys[data['dialog_id']] = data['key'];
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(keys));
   }
   
-  // Запрос на создание ключа от веба
-  if (message.data['type'] == 'request_vault_key') {
-    final key = _generateKey(30);
-    
+  if (data['type'] == 'request_vault_key') {
+    final key = _generateKey();
     String? keysJson = await storage.read(key: 'ntpr_chat_keys');
     Map<String, dynamic> keys = keysJson != null ? jsonDecode(keysJson) : {};
-    
-    keys[message.data['dialog_id']] = key;
+    keys[data['dialog_id']] = key;
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(keys));
     
-    // Отправляем ключ собеседнику напрямую через FCM
-    await _sendKeyDirect(message.data['receiver_id'], message.data['dialog_id'], key);
+    await _sendKeyToReceiver(data['receiver_id'], data['dialog_id'], key);
   }
 }
 
-String _generateKey(int length) {
+String _generateKey() {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*()_+-=[]{}|;:,.<>?';
   final random = Random.secure();
-  return String.fromCharCodes(
-    List.generate(length, (_) => chars.codeUnitAt(random.nextInt(chars.length)))
-  );
+  return String.fromCharCodes(List.generate(30, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
 }
 
-Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
-  try {
-    // Получаем FCM токен получателя
-    final response = await http.post(
-      Uri.parse('$API_URL/api?action=get-fcm-token'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': receiverId})
-    );
+Future<void> _sendKeyToReceiver(String receiverId, String dialogId, String key) async {
+  final response = await http.post(
+    Uri.parse('$API_URL/api?action=get-fcm-token'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({'user_id': receiverId})
+  );
+  
+  if (response.statusCode == 200) {
+    final data = jsonDecode(response.body);
+    final token = data['token'];
     
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final receiverToken = data['token'];
-      
-      // Отправляем напрямую через Firebase FCM
-      await http.post(
-        Uri.parse('https://fcm.googleapis.com/fcm/send'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'key=$FCM_SERVER_KEY'
-        },
-        body: jsonEncode({
-          'to': receiverToken,
-          'data': {
-            'type': 'chat_key',
-            'dialog_id': dialogId,
-            'key': key
-          }
-        })
-      );
-    }
-  } catch (e) {
-    print('Failed to send key: $e');
+    await http.post(
+      Uri.parse('https://fcm.googleapis.com/fcm/send'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'key=$FCM_SERVER_KEY'
+      },
+      body: jsonEncode({
+        'to': token,
+        'data': {
+          'type': 'chat_key',
+          'dialog_id': dialogId,
+          'key': key
+        }
+      })
+    );
   }
 }
 
-// ========== ГЛАВНЫЙ ЭКРАН ==========
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -97,36 +83,28 @@ class NtprVault extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Ntpr Vault',
-      theme: ThemeData.dark().copyWith(
-        primaryColor: Colors.blue,
-      ),
-      home: HomePage(),
+      theme: ThemeData.dark(),
+      home: ActivationScreen(),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
+class ActivationScreen extends StatefulWidget {
   @override
-  _HomePageState createState() => _HomePageState();
+  _ActivationScreenState createState() => _ActivationScreenState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _ActivationScreenState extends State<ActivationScreen> {
   final storage = FlutterSecureStorage();
-  String? _fcmToken;
-  
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  bool _isActivated = false;
-  String? _userId;
-  
-  Map<String, String> _chatKeys = {};
-  bool _isLoading = true;
+  String? _fcmToken;
+  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
     _setupFCM();
-    _loadChatKeys();
     _checkActivation();
   }
 
@@ -134,94 +112,12 @@ class _HomePageState extends State<HomePage> {
     await FirebaseMessaging.instance.requestPermission();
     String? token = await FirebaseMessaging.instance.getToken();
     setState(() => _fcmToken = token);
-    
-    // Входящие сообщения когда приложение открыто
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      if (message.data['type'] == 'chat_key') {
-        _saveReceivedKey(message.data['dialog_id'], message.data['key']);
-      }
-      if (message.data['type'] == 'request_vault_key') {
-        _handleCreateKeyRequest(message.data['dialog_id'], message.data['receiver_id']);
-      }
-    });
-  }
-  
-  Future<void> _handleCreateKeyRequest(String dialogId, String receiverId) async {
-    final key = _generateKey(30);
-    
-    setState(() {
-      _chatKeys[dialogId] = key;
-    });
-    await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(_chatKeys));
-    
-    await _sendKeyDirect(receiverId, dialogId, key);
-  }
-  
-  String _generateKey(int length) {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*()_+-=[]{}|;:,.<>?';
-    final random = Random.secure();
-    return String.fromCharCodes(
-      List.generate(length, (_) => chars.codeUnitAt(random.nextInt(chars.length)))
-    );
-  }
-  
-  Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$API_URL/api?action=get-fcm-token'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'user_id': receiverId})
-      );
-      
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final receiverToken = data['token'];
-        
-        await http.post(
-          Uri.parse('https://fcm.googleapis.com/fcm/send'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'key=$FCM_SERVER_KEY'
-          },
-          body: jsonEncode({
-            'to': receiverToken,
-            'data': {
-              'type': 'chat_key',
-              'dialog_id': dialogId,
-              'key': key
-            }
-          })
-        );
-      }
-    } catch (e) {
-      print('Failed to send key: $e');
-    }
-  }
-  
-  Future<void> _saveReceivedKey(String dialogId, String key) async {
-    setState(() {
-      _chatKeys[dialogId] = key;
-    });
-    await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(_chatKeys));
   }
 
-  Future<void> _loadChatKeys() async {
-    String? keysJson = await storage.read(key: 'ntpr_chat_keys');
-    if (keysJson != null) {
-      setState(() {
-        _chatKeys = Map<String, String>.from(jsonDecode(keysJson));
-      });
-    }
-    setState(() => _isLoading = false);
-  }
-  
   Future<void> _checkActivation() async {
     String? userId = await storage.read(key: 'ntpr_user_id');
     if (userId != null) {
-      setState(() {
-        _isActivated = true;
-        _userId = userId;
-      });
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VaultWebView()));
     }
   }
 
@@ -230,11 +126,11 @@ class _HomePageState extends State<HomePage> {
     final password = _passwordController.text;
     
     if (username.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Введите логин и пароль'))
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Введите логин и пароль')));
       return;
     }
+    
+    setState(() => _loading = true);
     
     try {
       final response = await http.post(
@@ -258,112 +154,223 @@ class _HomePageState extends State<HomePage> {
           );
         }
         
-        setState(() {
-          _isActivated = true;
-          _userId = userId;
-        });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Активировано!'))
-        );
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => VaultWebView()));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Неверный логин или пароль'))
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Неверный логин или пароль')));
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка соединения'))
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка соединения')));
+    } finally {
+      setState(() => _loading = false);
     }
-  }
-  
-  Future<void> _deactivate() async {
-    await storage.delete(key: 'ntpr_user_id');
-    await storage.delete(key: 'ntpr_username');
-    setState(() {
-      _isActivated = false;
-      _userId = null;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Ntpr Vault'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text('Активация Vault'), centerTitle: true),
       body: Padding(
-        padding: EdgeInsets.all(16),
+        padding: EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              _isActivated ? Icons.check_circle : Icons.lock_outline,
-              size: 80,
-              color: _isActivated ? Colors.green : Colors.blue,
+            Icon(Icons.lock_outline, size: 80, color: Colors.blue),
+            SizedBox(height: 40),
+            TextField(
+              controller: _usernameController,
+              decoration: InputDecoration(labelText: 'Логин', border: OutlineInputBorder()),
+              enabled: !_loading,
             ),
-            SizedBox(height: 20),
-            Text(
-              _isActivated ? 'Vault активирован' : 'Vault не активирован',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            SizedBox(height: 16),
+            TextField(
+              controller: _passwordController,
+              decoration: InputDecoration(labelText: 'Пароль', border: OutlineInputBorder()),
+              obscureText: true,
+              enabled: !_loading,
             ),
-            SizedBox(height: 10),
-            if (_isActivated && _userId != null)
-              Text('ID: $_userId', style: TextStyle(color: Colors.grey)),
-            if (_chatKeys.isNotEmpty)
-              Text('Ключей: ${_chatKeys.length}', style: TextStyle(color: Colors.green)),
-            SizedBox(height: 30),
-            
-            if (!_isActivated) ...[
-              TextField(
-                controller: _usernameController,
-                decoration: InputDecoration(
-                  labelText: 'Логин',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                decoration: InputDecoration(
-                  labelText: 'Пароль',
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true,
-              ),
-              SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _activate,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: Size(double.infinity, 50),
-                  backgroundColor: Colors.blue,
-                ),
-                child: Text('Активировать', style: TextStyle(fontSize: 18)),
-              ),
-            ] else ...[
-              ElevatedButton(
-                onPressed: _deactivate,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: Size(double.infinity, 50),
-                  backgroundColor: Colors.red,
-                ),
-                child: Text('Деактивировать', style: TextStyle(fontSize: 18)),
-              ),
-            ],
-            
-            SizedBox(height: 20),
-            if (_fcmToken != null) ...[
-              Text('Статус: ${_isActivated ? "Активен" : "Не активен"}', 
-                style: TextStyle(fontSize: 12, color: Colors.grey)),
-            ],
+            SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: _loading ? null : _activate,
+              style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50), backgroundColor: Colors.blue),
+              child: _loading ? CircularProgressIndicator() : Text('АКТИВИРОВАТЬ', style: TextStyle(fontSize: 18)),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class VaultWebView extends StatefulWidget {
+  @override
+  _VaultWebViewState createState() => _VaultWebViewState();
+}
+
+class _VaultWebViewState extends State<VaultWebView> {
+  WebViewController? _webViewController;
+  final storage = FlutterSecureStorage();
+  Map<String, String> _chatKeys = {};
+  String? _userId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _setupFCM();
+  }
+
+  Future<void> _loadData() async {
+    String? keysJson = await storage.read(key: 'ntpr_chat_keys');
+    if (keysJson != null) {
+      _chatKeys = Map<String, String>.from(jsonDecode(keysJson));
+    }
+    _userId = await storage.read(key: 'ntpr_user_id');
+    setState(() {});
+  }
+
+  Future<void> _setupFCM() async {
+    FirebaseMessaging.onMessage.listen((message) {
+      final data = message.data;
+      
+      if (data['type'] == 'chat_key') {
+        _saveKey(data['dialog_id'], data['key']);
+      }
+      
+      if (data['type'] == 'request_vault_key') {
+        _handleCreateKey(data['dialog_id'], data['receiver_id']);
+      }
+    });
+  }
+
+  Future<void> _saveKey(String dialogId, String key) async {
+    setState(() => _chatKeys[dialogId] = key);
+    await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(_chatKeys));
+  }
+
+  Future<void> _handleCreateKey(String dialogId, String receiverId) async {
+    if (_chatKeys.containsKey(dialogId)) {
+      await _sendKeyDirect(receiverId, dialogId, _chatKeys[dialogId]!);
+      return;
+    }
+    
+    final key = _generateKey();
+    await _saveKey(dialogId, key);
+    await _sendKeyDirect(receiverId, dialogId, key);
+  }
+
+  Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
+    final response = await http.post(
+      Uri.parse('$API_URL/api?action=get-fcm-token'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'user_id': receiverId})
+    );
+    
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final token = data['token'];
+      
+      await http.post(
+        Uri.parse('https://fcm.googleapis.com/fcm/send'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'key=$FCM_SERVER_KEY'
+        },
+        body: jsonEncode({
+          'to': token,
+          'data': {
+            'type': 'chat_key',
+            'dialog_id': dialogId,
+            'key': key
+          }
+        })
+      );
+    }
+  }
+
+  String _generateKey() {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*()_+-=[]{}|;:,.<>?';
+    final random = Random.secure();
+    return String.fromCharCodes(List.generate(30, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
+  }
+
+  String _encrypt(String text, String key) {
+    List<int> encrypted = [];
+    for (int i = 0; i < text.length; i++) {
+      encrypted.add(text.codeUnitAt(i) ^ key.codeUnitAt(i % key.length));
+    }
+    return base64.encode(encrypted);
+  }
+
+  String _decrypt(String encrypted, String key) {
+    try {
+      List<int> bytes = base64.decode(encrypted);
+      List<int> decrypted = [];
+      for (int i = 0; i < bytes.length; i++) {
+        decrypted.add(bytes[i] ^ key.codeUnitAt(i % key.length));
+      }
+      return String.fromCharCodes(decrypted);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  Future<String> _handleWebRequest(String request) async {
+    try {
+      final data = jsonDecode(request);
+      final action = data['action'];
+      final dialogId = data['dialog_id']?.toString();
+      final requestId = data['request_id'];
+      
+      if (action == 'decrypt') {
+        final text = data['text'];
+        final key = _chatKeys[dialogId];
+        if (key == null) return jsonEncode({'request_id': requestId, 'error': 'no_key', 'text': ''});
+        final decrypted = _decrypt(text, key);
+        return jsonEncode({'request_id': requestId, 'text': decrypted});
+      }
+      
+      if (action == 'encrypt') {
+        final text = data['text'];
+        final key = _chatKeys[dialogId];
+        if (key == null) return jsonEncode({'request_id': requestId, 'error': 'no_key', 'text': text});
+        final encrypted = _encrypt(text, key);
+        return jsonEncode({'request_id': requestId, 'text': encrypted});
+      }
+      
+      if (action == 'has_key') {
+        return jsonEncode({'request_id': requestId, 'has_key': _chatKeys.containsKey(dialogId)});
+      }
+      
+      if (action == 'deactivate') {
+        await storage.delete(key: 'ntpr_user_id');
+        await storage.delete(key: 'ntpr_username');
+        await storage.delete(key: 'ntpr_chat_keys');
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ActivationScreen()));
+        return jsonEncode({'request_id': requestId, 'success': true});
+      }
+      
+      return jsonEncode({'request_id': requestId, 'error': 'unknown_action'});
+    } catch (e) {
+      return jsonEncode({'error': e.toString()});
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: WebView(
+        initialUrl: WEB_APP_URL,
+        javascriptMode: JavascriptMode.unrestricted,
+        onWebViewCreated: (controller) => _webViewController = controller,
+        javascriptChannels: {
+          JavascriptChannel(
+            name: 'VaultBridge',
+            onMessageReceived: (JavascriptMessage message) async {
+              final response = await _handleWebRequest(message.message);
+              _webViewController?.runJavascript("window.vaultCallback($response);");
+            },
+          ),
+        },
       ),
     );
   }
