@@ -75,7 +75,9 @@ class NtprVault extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Ntpr Vault',
-      theme: ThemeData.dark(),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+      ),
       home: ActivationScreen(),
     );
   }
@@ -162,32 +164,34 @@ class _ActivationScreenState extends State<ActivationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Активация Vault'), centerTitle: true),
-      body: Padding(
-        padding: EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.lock_outline, size: 80, color: Colors.blue),
-            SizedBox(height: 40),
-            TextField(
-              controller: _usernameController,
-              decoration: InputDecoration(labelText: 'Логин', border: OutlineInputBorder()),
-              enabled: !_loading,
-            ),
-            SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              decoration: InputDecoration(labelText: 'Пароль', border: OutlineInputBorder()),
-              obscureText: true,
-              enabled: !_loading,
-            ),
-            SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: _loading ? null : _activate,
-              style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50), backgroundColor: Colors.blue),
-              child: _loading ? CircularProgressIndicator() : Text('АКТИВИРОВАТЬ', style: TextStyle(fontSize: 18)),
-            ),
-          ],
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.lock_outline, size: 80, color: Colors.blue),
+              SizedBox(height: 40),
+              TextField(
+                controller: _usernameController,
+                decoration: InputDecoration(labelText: 'Логин', border: OutlineInputBorder()),
+                enabled: !_loading,
+              ),
+              SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                decoration: InputDecoration(labelText: 'Пароль', border: OutlineInputBorder()),
+                obscureText: true,
+                enabled: !_loading,
+              ),
+              SizedBox(height: 32),
+              ElevatedButton(
+                onPressed: _loading ? null : _activate,
+                style: ElevatedButton.styleFrom(minimumSize: Size(double.infinity, 50), backgroundColor: Colors.blue),
+                child: _loading ? CircularProgressIndicator() : Text('АКТИВИРОВАТЬ', style: TextStyle(fontSize: 18)),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -217,6 +221,7 @@ class _VaultWebViewState extends State<VaultWebView> {
   Future<void> _initWebView() async {
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
       ..addJavaScriptChannel(
         'VaultBridge',
         onMessageReceived: (JavaScriptMessage message) async {
@@ -354,7 +359,10 @@ class _VaultWebViewState extends State<VaultWebView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: WebViewWidget(controller: _webViewController),
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: WebViewWidget(controller: _webViewController),
+      ),
     );
   }
 }
