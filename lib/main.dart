@@ -6,37 +6,38 @@ import 'dart:math';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+// ========== КОНСТАНТЫ ==========
+const String API_URL = 'https://ntpr-backend2.vercel.app';
+const String FCM_SERVER_KEY = 'ТВОЙ_FCM_SERVER_KEY_СЮДА';
+
 // ========== ФОНОВЫЙ ОБРАБОТЧИК ==========
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  _handleSilentPush(message.data);
-}
-
-void _handleSilentPush(Map<String, dynamic> data) async {
+  
   final storage = FlutterSecureStorage();
   
   // Получение ключа от собеседника
-  if (data['type'] == 'chat_key') {
+  if (message.data['type'] == 'chat_key') {
     String? keysJson = await storage.read(key: 'ntpr_chat_keys');
     Map<String, dynamic> keys = keysJson != null ? jsonDecode(keysJson) : {};
     
-    keys[data['dialog_id']] = data['key'];
+    keys[message.data['dialog_id']] = message.data['key'];
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(keys));
   }
   
   // Запрос на создание ключа от веба
-  if (data['type'] == 'request_vault_key') {
+  if (message.data['type'] == 'request_vault_key') {
     final key = _generateKey(30);
     
     String? keysJson = await storage.read(key: 'ntpr_chat_keys');
     Map<String, dynamic> keys = keysJson != null ? jsonDecode(keysJson) : {};
     
-    keys[data['dialog_id']] = key;
+    keys[message.data['dialog_id']] = key;
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(keys));
     
-    // Отправляем ключ собеседнику
-    await _sendKeyToReceiver(data['dialog_id'], data['receiver_id'], key);
+    // Отправляем ключ собеседнику напрямую через FCM
+    await _sendKeyDirect(message.data['receiver_id'], message.data['dialog_id'], key);
   }
 }
 
@@ -48,21 +49,36 @@ String _generateKey(int length) {
   );
 }
 
-Future<void> _sendKeyToReceiver(String dialogId, String receiverId, String key) async {
+Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
   try {
-    final storage = FlutterSecureStorage();
-    String? userId = await storage.read(key: 'ntpr_user_id');
-    
-    await http.post(
-      Uri.parse('https://ntpr-backend2.vercel.app/api?action=send-chat-key'),
+    // Получаем FCM токен получателя
+    final response = await http.post(
+      Uri.parse('$API_URL/api?action=get-fcm-token'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'dialog_id': dialogId,
-        'sender_id': userId,
-        'receiver_id': receiverId,
-        'chat_key': key
-      })
+      body: jsonEncode({'user_id': receiverId})
     );
+    
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final receiverToken = data['token'];
+      
+      // Отправляем напрямую через Firebase FCM
+      await http.post(
+        Uri.parse('https://fcm.googleapis.com/fcm/send'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'key=$FCM_SERVER_KEY'
+        },
+        body: jsonEncode({
+          'to': receiverToken,
+          'data': {
+            'type': 'chat_key',
+            'dialog_id': dialogId,
+            'key': key
+          }
+        })
+      );
+    }
   } catch (e) {
     print('Failed to send key: $e');
   }
@@ -119,20 +135,13 @@ class _HomePageState extends State<HomePage> {
     String? token = await FirebaseMessaging.instance.getToken();
     setState(() => _fcmToken = token);
     
-    // Обработка входящих сообщений когда приложение открыто
+    // Входящие сообщения когда приложение открыто
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.data['type'] == 'chat_key') {
         _saveReceivedKey(message.data['dialog_id'], message.data['key']);
       }
       if (message.data['type'] == 'request_vault_key') {
         _handleCreateKeyRequest(message.data['dialog_id'], message.data['receiver_id']);
-      }
-    });
-    
-    // Обработка при открытии из уведомления
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      if (message.data['type'] == 'chat_key') {
-        _saveReceivedKey(message.data['dialog_id'], message.data['key']);
       }
     });
   }
@@ -145,7 +154,7 @@ class _HomePageState extends State<HomePage> {
     });
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(_chatKeys));
     
-    await _sendKeyToReceiver(dialogId, receiverId, key);
+    await _sendKeyDirect(receiverId, dialogId, key);
   }
   
   String _generateKey(int length) {
@@ -156,18 +165,34 @@ class _HomePageState extends State<HomePage> {
     );
   }
   
-  Future<void> _sendKeyToReceiver(String dialogId, String receiverId, String key) async {
+  Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
     try {
-      await http.post(
-        Uri.parse('https://ntpr-backend2.vercel.app/api?action=send-chat-key'),
+      final response = await http.post(
+        Uri.parse('$API_URL/api?action=get-fcm-token'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'dialog_id': dialogId,
-          'sender_id': _userId,
-          'receiver_id': receiverId,
-          'chat_key': key
-        })
+        body: jsonEncode({'user_id': receiverId})
       );
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final receiverToken = data['token'];
+        
+        await http.post(
+          Uri.parse('https://fcm.googleapis.com/fcm/send'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'key=$FCM_SERVER_KEY'
+          },
+          body: jsonEncode({
+            'to': receiverToken,
+            'data': {
+              'type': 'chat_key',
+              'dialog_id': dialogId,
+              'key': key
+            }
+          })
+        );
+      }
     } catch (e) {
       print('Failed to send key: $e');
     }
@@ -213,7 +238,7 @@ class _HomePageState extends State<HomePage> {
     
     try {
       final response = await http.post(
-        Uri.parse('https://ntpr-backend2.vercel.app/api?action=login'),
+        Uri.parse('$API_URL/api?action=login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': username, 'password': password})
       );
@@ -227,7 +252,7 @@ class _HomePageState extends State<HomePage> {
         
         if (_fcmToken != null) {
           await http.post(
-            Uri.parse('https://ntpr-backend2.vercel.app/api?action=save-fcm-token'),
+            Uri.parse('$API_URL/api?action=save-fcm-token'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'userId': userId, 'token': _fcmToken, 'client_type': 'vault'})
           );
