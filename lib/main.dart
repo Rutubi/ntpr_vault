@@ -8,9 +8,9 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 const String API_URL = 'https://ntpr-backend2.vercel.app';
-const String FCM_SERVER_KEY = 'ТВОЙ_КЛЮЧ';
 const String WEB_APP_URL = 'https://ntpr-gilt.vercel.app';
 
+// ========== ФОНОВЫЙ ОБРАБОТЧИК FCM ==========
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -32,7 +32,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     keys[data['dialog_id']] = key;
     await storage.write(key: 'ntpr_chat_keys', value: jsonEncode(keys));
     
-    await _sendKeyToReceiver(data['receiver_id'], data['dialog_id'], key);
+    await _sendKeyViaBackend(data['receiver_id'], data['dialog_id'], key, null);
   }
 }
 
@@ -42,35 +42,27 @@ String _generateKey() {
   return String.fromCharCodes(List.generate(30, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
 }
 
-Future<void> _sendKeyToReceiver(String receiverId, String dialogId, String key) async {
-  final response = await http.post(
-    Uri.parse('$API_URL/api?action=get-fcm-token'),
-    headers: {'Content-Type': 'application/json'},
-    body: jsonEncode({'user_id': receiverId})
-  );
-  
-  if (response.statusCode == 200) {
-    final data = jsonDecode(response.body);
-    final token = data['token'];
+Future<void> _sendKeyViaBackend(String receiverId, String dialogId, String key, String? senderId) async {
+  try {
+    final storage = FlutterSecureStorage();
+    final userId = senderId ?? await storage.read(key: 'ntpr_user_id');
     
     await http.post(
-      Uri.parse('https://fcm.googleapis.com/fcm/send'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'key=$FCM_SERVER_KEY'
-      },
+      Uri.parse('$API_URL/api?action=send-chat-key'),
+      headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'to': token,
-        'data': {
-          'type': 'chat_key',
-          'dialog_id': dialogId,
-          'key': key
-        }
+        'dialog_id': dialogId,
+        'sender_id': userId,
+        'receiver_id': receiverId,
+        'chat_key': key
       })
     );
+  } catch (e) {
+    print('Error sending key: $e');
   }
 }
 
+// ========== ГЛАВНОЕ ПРИЛОЖЕНИЕ ==========
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -89,6 +81,7 @@ class NtprVault extends StatelessWidget {
   }
 }
 
+// ========== ЭКРАН АКТИВАЦИИ ==========
 class ActivationScreen extends StatefulWidget {
   @override
   _ActivationScreenState createState() => _ActivationScreenState();
@@ -201,6 +194,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
   }
 }
 
+// ========== WEBVIEW С VAULT ==========
 class VaultWebView extends StatefulWidget {
   @override
   _VaultWebViewState createState() => _VaultWebViewState();
@@ -249,41 +243,29 @@ class _VaultWebViewState extends State<VaultWebView> {
 
   Future<void> _handleCreateKey(String dialogId, String receiverId) async {
     if (_chatKeys.containsKey(dialogId)) {
-      await _sendKeyDirect(receiverId, dialogId, _chatKeys[dialogId]!);
+      await _sendKeyViaBackend(receiverId, dialogId, _chatKeys[dialogId]!);
       return;
     }
     
     final key = _generateKey();
     await _saveKey(dialogId, key);
-    await _sendKeyDirect(receiverId, dialogId, key);
+    await _sendKeyViaBackend(receiverId, dialogId, key);
   }
 
-  Future<void> _sendKeyDirect(String receiverId, String dialogId, String key) async {
-    final response = await http.post(
-      Uri.parse('$API_URL/api?action=get-fcm-token'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': receiverId})
-    );
-    
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final token = data['token'];
-      
+  Future<void> _sendKeyViaBackend(String receiverId, String dialogId, String key) async {
+    try {
       await http.post(
-        Uri.parse('https://fcm.googleapis.com/fcm/send'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'key=$FCM_SERVER_KEY'
-        },
+        Uri.parse('$API_URL/api?action=send-chat-key'),
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'to': token,
-          'data': {
-            'type': 'chat_key',
-            'dialog_id': dialogId,
-            'key': key
-          }
+          'dialog_id': dialogId,
+          'sender_id': _userId,
+          'receiver_id': receiverId,
+          'chat_key': key
         })
       );
+    } catch (e) {
+      print('Error sending key: $e');
     }
   }
 
